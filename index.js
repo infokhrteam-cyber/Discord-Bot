@@ -36,7 +36,9 @@ async function getYouTubeViews(channelName) {
         const response = await fetch(url);
         const data = await response.json();
         if (data.items && data.items.length > 0) return parseInt(data.items[0].statistics.viewCount);
-    } catch (error) { console.error(error); }
+    } catch (error) { 
+        console.error(error); 
+    }
     return 0;
 }
 
@@ -146,7 +148,6 @@ client.on('messageCreate', async (message) => {
 
     // 4️⃣ EDITOR: Task Complete (Specific Channel Ke Liye)
     if (message.content.toLowerCase().startsWith('!done')) {
-        const args = message.content.split(' ');
         const channelName = args[1];
 
         // Agar editor ne channel ka naam nahi likha
@@ -169,13 +170,33 @@ client.on('messageCreate', async (message) => {
         }
     }
     
-    // 5️⃣ EDITOR: Editor Task ko Hamesha Ke Liye Delete karna
+    // 5️⃣ EDITOR: Editor Task ko Hamesha Ke Liye Delete karna (Channel wise)
     if (command === '!stop-editor') {
         const mentionedUser = message.mentions.users.first();
-        if (!mentionedUser) return message.reply('❌ Sahi tareeqa: `!stop-editor @User`');
-        db.editorTasks = db.editorTasks.filter(t => t.userId !== mentionedUser.id);
+        const channelName = args[2]; // Channel ka naam command se uthana
+
+        // Agar user ne mention nahi kiya ya channel ka naam nahi diya
+        if (!mentionedUser || !channelName) {
+            return message.reply('❌ **Command galat hai!** \nSahi tareeqa: `!stop-editor @User ChannelName` \nMisal: `!stop-editor @Rehan JasonWardsNews`');
+        }
+
+        // Check karna ke kya is user ka is channel ke liye koi task majood hai
+        const taskExists = db.editorTasks.some(t => 
+            t.userId === mentionedUser.id && 
+            t.channelName.toLowerCase() === channelName.toLowerCase()
+        );
+
+        if (!taskExists) {
+            return message.reply(`❌ Mujhey <@${mentionedUser.id}> ka '${channelName}' ke liye koi active task nahi mila.`);
+        }
+
+        // User ki specific channel wali array (object) ko filter out/remove karna
+        db.editorTasks = db.editorTasks.filter(t => 
+            !(t.userId === mentionedUser.id && t.channelName.toLowerCase() === channelName.toLowerCase())
+        );
+        
         saveDb();
-        message.reply(`🗑️ Editor ka record bilkul mita diya gaya hai.`);
+        message.reply(`🗑️ Done! <@${mentionedUser.id}> ka **${channelName}** wala task hamesha ke liye delete kar diya gaya hai.`);
     }
 });
 
