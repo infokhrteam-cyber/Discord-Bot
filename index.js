@@ -144,13 +144,28 @@ client.on('messageCreate', async (message) => {
         message.reply(`🎬 Editor task set! Agar ${deadline} tak video na aayi, toh har 10 minute baad alarm baje ga.`);
     }
 
-    // 4️⃣ EDITOR: Task Complete (Alarm Band Karne Ke Liye)
-    if (message.content.toLowerCase() === 'today task complete') {
-        const editorTask = db.editorTasks.find(t => t.userId === message.author.id);
+    // 4️⃣ EDITOR: Task Complete (Specific Channel Ke Liye)
+    if (message.content.toLowerCase().startsWith('!done')) {
+        const args = message.content.split(' ');
+        const channelName = args[1];
+
+        // Agar editor ne channel ka naam nahi likha
+        if (!channelName) {
+            return message.reply('❌ Sath channel ka naam bhi batayein. Misal: `!done JasonWardsNews`');
+        }
+
+        // Editor ke us makhsoos channel wale task ko dhoondna
+        const editorTask = db.editorTasks.find(t => 
+            t.userId === message.author.id && 
+            t.channelName.toLowerCase() === channelName.toLowerCase()
+        );
+
         if (editorTask) {
             editorTask.completedToday = true;
             saveDb();
-            message.reply('✅ Zabardast! Aap ka aaj ka task complete mark ho gaya hai. Ab alarm off kar diya gaya hai.');
+            message.reply(`✅ Zabardast! Aap ka **${editorTask.channelName}** ka aaj ka task complete mark ho gaya hai. Alarm off! 🔕`);
+        } else {
+            message.reply(`❌ Mujhey aap ka '${channelName}' ka koi active task nahi mila. Spelling check karein.`);
         }
     }
     
