@@ -1,25 +1,45 @@
 require('dotenv').config();
 const { Client, GatewayIntentBits } = require('discord.js');
 const express = require('express');
-const fs = require('fs');
 const cron = require('node-cron');
+const mongoose = require('mongoose'); // NAYA: MongoDB Tool
 
 // Dummy Server for Render
 const app = express();
 const port = process.env.PORT || 3000;
-app.get('/', (req, res) => res.send('Bot is Live!'));
+app.get('/', (req, res) => res.send('Bot is Live with Permanent Cloud Database!'));
 app.listen(port, () => console.log(`Web server listening on port ${port}`));
 
-// Database Link
-const tasksFile = './tasks.json';
-let db = { managerTasks: [], editorTasks: [], editorHistory: [] };
-if (fs.existsSync(tasksFile)) {
-    const fileData = JSON.parse(fs.readFileSync(tasksFile));
-    db = { ...db, ...fileData }; 
-}
-function saveDb() {
-    fs.writeFileSync(tasksFile, JSON.stringify(db, null, 2));
-}
+// 🚀 MONGODB CLOUD CONNECTION 🚀
+mongoose.connect(process.env.MONGODB_URI)
+    .then(() => console.log('✅ MongoDB Cloud se successfully connect ho gaya!'))
+    .catch(err => console.error('❌ MongoDB Connection Error:', err));
+
+// DATABASE STRUCTURES (Schemas)
+const ManagerTask = mongoose.model('ManagerTask', new mongoose.Schema({
+    userId: String,
+    targetViews: Number,
+    channelName: String,
+    daysLeft: Number,
+    discordChannelId: String,
+    initialViews: Number
+}));
+
+const EditorTask = mongoose.model('EditorTask', new mongoose.Schema({
+    userId: String,
+    channelName: String,
+    deadline: String,
+    completedToday: { type: Boolean, default: false },
+    snoozeUntil: { type: Number, default: null },
+    discordChannelId: String
+}));
+
+const EditorHistory = mongoose.model('EditorHistory', new mongoose.Schema({
+    userId: String,
+    channelName: String,
+    date: String,
+    isLate: Boolean
+}));
 
 // Channels List
 const CHANNEL_IDS = {
@@ -52,25 +72,25 @@ client.once('ready', () => {
 
     // ⏰ CRON 1: Raat 12 Baje Manager ki Daily Report
     cron.schedule('0 0 * * *', async () => {
-        for (let task of db.managerTasks) {
+        const managerTasks = await ManagerTask.find(); // Cloud se data uthana
+        for (let task of managerTasks) {
             const currentViews = await getYouTubeViews(task.channelName);
             const initial = task.initialViews || 0;
             const achieved = currentViews > initial ? currentViews - initial : 0;
             const remaining = task.targetViews > achieved ? task.targetViews - achieved : 0;
             const percentage = task.targetViews > 0 ? Math.min((achieved / task.targetViews) * 100, 100).toFixed(1) : 0;
             
-            // Progress Bar Generator
             const pCount = Math.floor(percentage / 10);
             const pBar = '[' + '▓'.repeat(pCount) + '░'.repeat(10 - pCount) + ']';
 
             task.daysLeft -= 1; 
+            await task.save(); // Cloud par update save karna
             
             const channel = client.channels.cache.get(task.discordChannelId);
             if (channel) {
                 channel.send(`📈 **DAILY REPORT (Raat 12 Baje)** 📈\n👤 <@${task.userId}>\n📺 **Channel:** ${task.channelName}\n🏁 **Target:** ${task.targetViews.toLocaleString()} New Views\n✅ **Achieved:** ${achieved.toLocaleString()} Views\n📉 **Remaining:** ${remaining.toLocaleString()} Views\n📊 **Progress:** ${pBar} ${percentage}%\n⏳ **Days Left:** ${task.daysLeft}`);
             }
         }
-        saveDb();
     }, { timezone: 'Asia/Karachi' });
 
     // ⏰ CRON 2: Har 10 Minute baad Editor ka Alarm Check (WITH ANGRY AI)
@@ -80,10 +100,10 @@ client.once('ready', () => {
         const currentMins = dateObj.getHours() * 60 + dateObj.getMinutes();
         const nowMs = Date.now();
 
-        // Note: For async operations inside loop, hum map ya for...of use karte hain
-        for (let task of db.editorTasks) {
+        const editorTasks = await EditorTask.find(); // Cloud se data uthana
+        for (let task of editorTasks) {
             if (task.completedToday) continue; 
-            if (task.snoozeUntil && nowMs < task.snoozeUntil) continue; // Agar editor ne wait ka kaha hai toh ignore karo
+            if (task.snoozeUntil && nowMs < task.snoozeUntil) continue; 
 
             const [h, m] = task.deadline.split(':');
             const deadlineMins = parseInt(h) * 60 + parseInt(m);
@@ -92,37 +112,21 @@ client.once('ready', () => {
                 const channel = client.channels.cache.get(task.discordChannelId);
                 if (channel) {
                     const lateByMins = currentMins - deadlineMins;
-                    
                     try {
-                        // AI ko gusse wala prompt dena
-                        const prompt = `You are a strict task manager bot for KHR Official agency. An editor is late submitting a video by ${lateByMins} minutes. 
-                        Write a short, progressive warning message in Roman Urdu. 
-                        If they are 10-20 mins late, be slightly annoyed. If 30+ mins late, be very angry. 
-                        You MUST explicitly mention that you will report their late delivery to "Boss Afnan". 
-                        Keep it concise (1-2 lines) and direct for a Discord message. Do not use hashtags.`;
+                        const prompt = `You are a strict task manager bot for KHR Official agency. An editor is late submitting a video by ${lateByMins} minutes. Write a short, progressive warning message in Roman Urdu. If they are 10-20 mins late, be slightly annoyed. If 30+ mins late, be very angry. You MUST explicitly mention that you will report their late delivery to "Boss Afnan". Keep it concise (1-2 lines) and direct for a Discord message. Do not use hashtags.`;
 
                         const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`;
                         const response = await fetch(url, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                                contents: [{ parts: [{ text: prompt }] }]
-                            })
+                            body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
                         });
 
                         const data = await response.json();
-                        let aiAngryMessage = "";
-                        
-                        if (data.candidates && data.candidates.length > 0) {
-                            aiAngryMessage = data.candidates[0].content.parts[0].text.trim();
-                        } else {
-                            aiAngryMessage = `Aap ${lateByMins} minute late ho chuke hain! Jaldi video bhejein warna direct Boss Afnan ko report chali jayegi!`;
-                        }
+                        let aiAngryMessage = data.candidates && data.candidates.length > 0 ? data.candidates[0].content.parts[0].text.trim() : `Aap ${lateByMins} minute late ho chuke hain! Jaldi video bhejein warna direct Boss Afnan ko report chali jayegi!`;
 
                         channel.send(`🚨 <@${task.userId}> ${aiAngryMessage}\n*(Thora time chahiye toh \`!wait 30\` likho, warna ban jao ge boss ka shikar!)*`);
-                        
                     } catch (error) {
-                        // Agar internet ya API issue ho toh default warning
                         channel.send(`🚨 <@${task.userId}> Aap ki deadline khatam hue ${lateByMins} minute ho gaye hain! Jaldi video bhejo warna Boss Afnan ko batana padega!\n*(Thora time chahiye toh \`!wait 30\` likho)*`);
                     }
                 }
@@ -130,13 +134,10 @@ client.once('ready', () => {
         }
     }, { timezone: 'Asia/Karachi' });
 
-    // ⏰ CRON 3: Raat 12 Baje Editors ka Task Reset karna (Naye din ke liye)
-    cron.schedule('0 0 * * *', () => {
-        db.editorTasks.forEach(task => {
-            task.completedToday = false;
-            task.snoozeUntil = null; // Snooze history reset
-        });
-        saveDb();
+    // ⏰ CRON 3: Raat 12 Baje Editors ka Task Reset karna
+    cron.schedule('0 0 * * *', async () => {
+        await EditorTask.updateMany({}, { completedToday: false, snoozeUntil: null }); // Cloud mein sab update karna
+        console.log('✅ Editors tasks reset for the new day.');
     }, { timezone: 'Asia/Karachi' });
 });
 
@@ -152,33 +153,30 @@ client.on('messageCreate', async (message) => {
         if (!mentionedUser || args.length < 5) return message.reply('❌ Sahi tareeqa: `!assign @User TargetViews ChannelName Days`');
         
         message.channel.send('⏳ Initial views fetch kar raha hu taake naya target theek se track ho...');
-        
         const initialViews = await getYouTubeViews(args[3]);
 
-        const task = {
+        const newTask = new ManagerTask({
             userId: mentionedUser.id,
             targetViews: parseInt(args[2]),
             channelName: args[3],
             daysLeft: parseInt(args[4]),
             discordChannelId: message.channel.id,
             initialViews: initialViews
-        };
-        db.managerTasks.push(task);
-        saveDb();
-        message.reply(`✅ Task Saved! **${task.channelName}** ke aaj ke views (${initialViews.toLocaleString()}) save ho gaye hain. Ab inke aagay **${task.targetViews.toLocaleString()}** naye views track honge!`);
-        return;
+        });
+        await newTask.save(); // Cloud par save
+        return message.reply(`✅ Task Saved Permanently! **${args[3]}** ke aaj ke views (${initialViews.toLocaleString()}) save ho gaye hain. Ab inke aagay **${parseInt(args[2]).toLocaleString()}** naye views track honge!`);
     }
 
-    // 2️⃣ MANAGER: Real-Time Report Command (!report ChannelName)
+    // 2️⃣ MANAGER: Real-Time Report Command
     if (command === '!report' || command === '!today') {
         const channelName = args[1] === 'report' ? args[2] : args[1]; 
         if (!channelName) return message.reply('❌ Sahi tareeqa: `!report ChannelName`');
         
-        const task = db.managerTasks.find(t => t.channelName.toLowerCase() === channelName.toLowerCase());
+        // Cloud se channel dhoondna
+        const task = await ManagerTask.findOne({ channelName: new RegExp('^' + channelName + '$', 'i') });
         if (!task) return message.reply(`❌ Mujhey '${channelName}' ka koi active task nahi mila.`);
         
         message.channel.send('⏳ Live YouTube API se data fetch ho raha hai...');
-        
         const currentViews = await getYouTubeViews(task.channelName);
         const initial = task.initialViews || 0;
         const achieved = currentViews > initial ? currentViews - initial : 0;
@@ -196,9 +194,9 @@ client.on('messageCreate', async (message) => {
         const mentionedUser = message.mentions.users.first();
         const channelName = args[2];
         if (!mentionedUser || !channelName) return message.reply('❌ Sahi tareeqa: `!unassign @User ChannelName`');
-        db.managerTasks = db.managerTasks.filter(t => !(t.userId === mentionedUser.id && t.channelName.toLowerCase() === channelName.toLowerCase()));
-        saveDb();
-        return message.reply(`🗑️ Done! Task hata diya gaya hai.`);
+        
+        await ManagerTask.deleteMany({ userId: mentionedUser.id, channelName: new RegExp('^' + channelName + '$', 'i') });
+        return message.reply(`🗑️ Done! Task Cloud Database se hata diya gaya hai.`);
     }
 
     // 4️⃣ EDITOR: Editor ki Deadline Setup
@@ -209,7 +207,8 @@ client.on('messageCreate', async (message) => {
         if (!mentionedUser || !channelName || !deadline || !deadline.includes(':')) {
             return message.reply('❌ Sahi tareeqa: `!editor @User ChannelName 15:00` (24-Hour Format)');
         }
-        db.editorTasks.push({
+        
+        const newTask = new EditorTask({
             userId: mentionedUser.id,
             channelName: channelName,
             deadline: deadline,
@@ -217,8 +216,8 @@ client.on('messageCreate', async (message) => {
             snoozeUntil: null,
             discordChannelId: message.channel.id
         });
-        saveDb();
-        return message.reply(`🎬 Editor task set! Agar ${deadline} tak video na aayi, toh har 10 minute baad alarm baje ga.`);
+        await newTask.save(); // Cloud par save
+        return message.reply(`🎬 Editor task set permanently! Agar ${deadline} tak video na aayi, toh har 10 minute baad alarm baje ga.`);
     }
 
     // 5️⃣ EDITOR: Delay / Snooze Command (!wait 30)
@@ -226,24 +225,18 @@ client.on('messageCreate', async (message) => {
         const amount = parseInt(args[1]);
         const unit = args[2] ? args[2].toLowerCase() : 'minutes';
         let addMins = 30; 
-        
         if (!isNaN(amount)) {
             if (unit.includes('hour') || unit === 'h') addMins = amount * 60;
             else addMins = amount;
         }
         
         const nowMs = Date.now();
-        let updated = false;
+        const result = await EditorTask.updateMany(
+            { userId: message.author.id, completedToday: false },
+            { snoozeUntil: nowMs + (addMins * 60000) }
+        );
         
-        db.editorTasks.forEach(t => {
-            if (t.userId === message.author.id && !t.completedToday) {
-                t.snoozeUntil = nowMs + (addMins * 60000);
-                updated = true;
-            }
-        });
-        
-        if (updated) {
-            saveDb();
+        if (result.modifiedCount > 0) {
             return message.reply(`🔕 Theek hai boss! Main agle **${addMins} minute** tak alarm nahi bajaunga. Aaram se edit kar lein!`);
         } else {
             return message.reply(`❌ Aap ka koi active pending task nahi hai jise main delay karu.`);
@@ -255,16 +248,12 @@ client.on('messageCreate', async (message) => {
         const mentionedUser = message.mentions.users.first();
         if (!mentionedUser) return message.reply('❌ Sahi tareeqa: `!leave @User`');
         
-        let found = false;
-        db.editorTasks.forEach(t => {
-            if (t.userId === mentionedUser.id) {
-                t.completedToday = true;
-                found = true;
-            }
-        });
+        const result = await EditorTask.updateMany(
+            { userId: mentionedUser.id },
+            { completedToday: true }
+        );
         
-        if (found) {
-            saveDb();
+        if (result.modifiedCount > 0) {
             return message.reply(`🏖️ Chutti manzoor! <@${mentionedUser.id}> ko aaj koi editor alarm nahi aayega.`);
         } else {
             return message.reply(`❌ In ka koi active task nahi mila.`);
@@ -276,7 +265,7 @@ client.on('messageCreate', async (message) => {
         const channelName = args[1];
         if (!channelName) return message.reply('❌ Sath channel ka naam bhi batayein. Misal: `!done JasonWardsNews`');
 
-        const editorTask = db.editorTasks.find(t => t.userId === message.author.id && t.channelName.toLowerCase() === channelName.toLowerCase());
+        const editorTask = await EditorTask.findOne({ userId: message.author.id, channelName: new RegExp('^' + channelName + '$', 'i') });
 
         if (editorTask) {
             const nowStr = new Date().toLocaleString("en-US", {timeZone: "Asia/Karachi"});
@@ -287,17 +276,16 @@ client.on('messageCreate', async (message) => {
             
             const isLate = currentMins > deadlineMins;
             
-            if (!db.editorHistory) db.editorHistory = [];
-            db.editorHistory.push({
+            const newHistory = new EditorHistory({
                 userId: message.author.id,
                 channelName: editorTask.channelName,
                 date: dateObj.toLocaleDateString(),
                 isLate: isLate
             });
-            if (db.editorHistory.length > 1000) db.editorHistory.shift();
+            await newHistory.save(); // History save
             
             editorTask.completedToday = true;
-            saveDb();
+            await editorTask.save(); // Task update
             
             const extraMsg = isLate ? "*(Lekin aaj aap late thay! ⏰)*" : "*(Good job, waqt par kaam poora kiya! ⭐)*";
             return message.reply(`✅ Zabardast! Aap ka **${editorTask.channelName}** ka task complete mark ho gaya hai. Alarm off! 🔕\n${extraMsg}`);
@@ -311,7 +299,7 @@ client.on('messageCreate', async (message) => {
         const mentionedUser = message.mentions.users.first();
         if (!mentionedUser) return message.reply('❌ Sahi tareeqa: `!status @User`');
         
-        const history = (db.editorHistory || []).filter(h => h.userId === mentionedUser.id);
+        const history = await EditorHistory.find({ userId: mentionedUser.id });
         if (history.length === 0) return message.reply(`📊 <@${mentionedUser.id}> ka abhi tak koi record (history) nahi hai.`);
         
         const totalTasks = history.length;
@@ -319,12 +307,7 @@ client.on('messageCreate', async (message) => {
         const onTimeTasks = totalTasks - lateTasks;
         const successRate = ((onTimeTasks / totalTasks) * 100).toFixed(1);
         
-        return message.reply(`📊 **PERFORMANCE REPORT: <@${mentionedUser.id}>** 📊\n` +
-                      `✅ **Total Videos Submitted:** ${totalTasks}\n` +
-                      `⭐ **On-Time Submissions:** ${onTimeTasks}\n` +
-                      `⏰ **Late Submissions:** ${lateTasks}\n` +
-                      `📈 **Success Rate:** ${successRate}%\n` +
-                      `*(Yeh un ki pichli tamaam editing submissions ka record hai)*`);
+        return message.reply(`📊 **PERFORMANCE REPORT: <@${mentionedUser.id}>** 📊\n✅ **Total Videos Submitted:** ${totalTasks}\n⭐ **On-Time Submissions:** ${onTimeTasks}\n⏰ **Late Submissions:** ${lateTasks}\n📈 **Success Rate:** ${successRate}%\n*(Yeh un ki pichli tamaam editing submissions ka record hai)*`);
     }
     
     // 9️⃣ EDITOR: Stop Editor (Delete Task)
@@ -332,8 +315,8 @@ client.on('messageCreate', async (message) => {
         const mentionedUser = message.mentions.users.first();
         const channelName = args[2];
         if (!mentionedUser || !channelName) return message.reply('❌ Sahi tareeqa: `!stop-editor @User ChannelName`');
-        db.editorTasks = db.editorTasks.filter(t => !(t.userId === mentionedUser.id && t.channelName.toLowerCase() === channelName.toLowerCase()));
-        saveDb();
+        
+        await EditorTask.deleteMany({ userId: mentionedUser.id, channelName: new RegExp('^' + channelName + '$', 'i') });
         return message.reply(`🗑️ Done! <@${mentionedUser.id}> ka **${channelName}** wala task hamesha ke liye delete kar diya gaya hai.`);
     }
 
@@ -358,7 +341,6 @@ client.on('messageCreate', async (message) => {
             });
 
             const data = await response.json();
-
             if (data.candidates && data.candidates.length > 0) {
                 const aiReply = data.candidates[0].content.parts[0].text;
                 await thinkingMsg.edit(`🤖 ${aiReply}`);
@@ -372,5 +354,4 @@ client.on('messageCreate', async (message) => {
     }
 });
 
-// Sirf ek baar login
 client.login(process.env.DISCORD_TOKEN);
