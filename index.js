@@ -306,37 +306,54 @@ client.on('messageCreate', async (message) => {
         return message.reply(`🗑️ Done! <@${mentionedUser.id}> ka **${channelName}** wala task hamesha ke liye delete kar diya gaya hai.`);
     }
 
-    // 🤖 🔟 SMART AI ASSISTANT (Agar message "!" se shuru ho aur koi known command na ho)
+    // 🤖 🔟 SMART AI ASSISTANT (Gemini API Integration)
     const knownCommands = ['!assign', '!unassign', '!editor', '!done', '!stop-editor', '!wait', '!leave', '!report', '!today', '!status', '!performance', '!test'];
     
-    // Check if message starts with '!' and is NOT a known command, and is NOT a user ping like !<@123>
+    // Agar message '!' se shuru ho, command na ho, aur kisi user ko tag na kiya ho
     if (command.startsWith('!') && command.length > 1 && !command.startsWith('!<@') && !knownCommands.includes(command)) {
-        const userMessage = message.content.toLowerCase();
         
-        if (userMessage.includes('render') || userMessage.includes('export')) {
-            return message.reply('🎬 **Editing Tip:** Premiere Pro mein export karte waqt Format `H.264` rakhein. Agar high quality chahiye toh Bitrate Settings mein VBR 2 Pass select karein (Target 15, Max 20). YouTube ke liye yeh best hai!');
-        } else if (userMessage.includes('audio') || userMessage.includes('awaz')) {
-            return message.reply('🎧 **Audio Tip:** Awaz ko professional banane ke liye *Parametric Equalizer* (Vocal Enhancer) aur *Hard Limiter* (-3dB) use karein. Agar background noise hai toh Denoise ka effect halke amount (10-20%) par lagayen.');
-        } else if (userMessage.includes('color') || userMessage.includes('grading')) {
-            return message.reply('🎨 **Color Tip:** Lumetri Color panel mein basic correction se shuru karein. Contrast aur Saturation thora barhayen, skin tones hamesha natural rakhein. Highlights ziada burn na honay dein.');
-        } else if (userMessage.includes('thumbnail')) {
-            return message.reply('🖼️ **Thumbnail Tip:** Text hamesha bara aur bold (jaise Impact font) hona chahiye. Main subject (face/object) par halka sa drop shadow ya stroke lagayen taake CTR (Click Through Rate) high ho!');
-        } else if (userMessage.includes('music') || userMessage.includes('background')) {
-            return message.reply('🎵 **Music Tip:** Background music volume hamesha -20dB se -25dB ke darmian rakhein taake voice over clear sunayi de.');
-        } else if (userMessage.includes('fast') || userMessage.includes('jaldi')) {
-            return message.reply('⚡ **Speed Tip:** Editing tez karni hai toh hamesha Keyboard Shortcuts use karein! Jaise `C` for Cut, `V` for Select, aur Ripple Delete ke shortcut set kar lein.');
-        } else {
-            // Agar koi general sawal pucha gaya
-            const replies = [
-                "Hmm, acha sawal hai! Agar edit mein phans gaye ho toh thori der screen se nazar hatao, pani pio, aur phir dimagh chalao.",
-                "Main ek Bot zaroor hu, lekin editing ka poora assistant hu! Agar koi specific trick (jaise audio, render, ya color) chahiye toh poochein.",
-                "Boss, target poore karne hain jaldi! Editing smooth nahi ho rahi toh playback resolution ko 1/4 par set kar lo.",
-                "Poocho poocho! Premiere Pro, After Effects ya kisi aur software ki editing tips chahiye toh bilkul free hoke poochein."
-            ];
-            const randomReply = replies[Math.floor(Math.random() * replies.length)];
-            return message.reply(`🤖 ${randomReply}`);
+        // '!' ko hata kar user ka sawal nikalna
+        const userPrompt = message.content.substring(1).trim(); 
+        
+        // Bot pehle "Soch raha hu" ka message bheje ga
+        const thinkingMsg = await message.reply('🤖 *Soch raha hu...*');
+
+        try {
+            // Gemini API (1.5 Flash) ko request bhejna
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`;
+            
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    system_instruction: {
+                        parts: [{ text: "You are a highly intelligent, professional, and friendly AI assistant for a video editing agency named KHR Official. You answer editing questions, general queries, and chat like a real person. Mostly use Roman Urdu/Hindi to reply. Keep responses concise and formatted nicely for Discord." }]
+                    },
+                    contents: [{
+                        parts: [{ text: userPrompt }]
+                    }]
+                })
+            });
+
+            const data = await response.json();
+
+            if (data.candidates && data.candidates.length > 0) {
+                const aiReply = data.candidates[0].content.parts[0].text;
+                // Puranay "Soch raha hu" wale message ko real answer se edit kar dena
+                await thinkingMsg.edit(`🤖 ${aiReply}`);
+            } else {
+                await thinkingMsg.edit('❌ *Gemini API se koi jawab nahi aaya. Apni API key ya Render par Environment Variable check karein.*');
+            }
+
+        } catch (error) {
+            console.error("Gemini API Error:", error);
+            await thinkingMsg.edit('❌ *System mein koi error aa gaya hai. Baad mein try karein.*');
         }
     }
 });
+
+client.login(process.env.DISCORD_TOKEN);
 
 client.login(process.env.DISCORD_TOKEN);
