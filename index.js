@@ -15,7 +15,7 @@ const tasksFile = './tasks.json';
 let db = { managerTasks: [], editorTasks: [], editorHistory: [] };
 if (fs.existsSync(tasksFile)) {
     const fileData = JSON.parse(fs.readFileSync(tasksFile));
-    db = { ...db, ...fileData }; // Puranay database ko naye system ke sath merge karna
+    db = { ...db, ...fileData }; 
 }
 function saveDb() {
     fs.writeFileSync(tasksFile, JSON.stringify(db, null, 2));
@@ -73,16 +73,17 @@ client.once('ready', () => {
         saveDb();
     }, { timezone: 'Asia/Karachi' });
 
-    // ⏰ CRON 2: Har 10 Minute baad Editor ka Alarm Check
-    cron.schedule('*/10 * * * *', () => {
+    // ⏰ CRON 2: Har 10 Minute baad Editor ka Alarm Check (WITH ANGRY AI)
+    cron.schedule('*/10 * * * *', async () => {
         const nowStr = new Date().toLocaleString("en-US", {timeZone: "Asia/Karachi"});
         const dateObj = new Date(nowStr);
         const currentMins = dateObj.getHours() * 60 + dateObj.getMinutes();
         const nowMs = Date.now();
 
-        db.editorTasks.forEach(task => {
-            if (task.completedToday) return; 
-            if (task.snoozeUntil && nowMs < task.snoozeUntil) return; // Agar editor ne wait ka kaha hai toh ignore karo
+        // Note: For async operations inside loop, hum map ya for...of use karte hain
+        for (let task of db.editorTasks) {
+            if (task.completedToday) continue; 
+            if (task.snoozeUntil && nowMs < task.snoozeUntil) continue; // Agar editor ne wait ka kaha hai toh ignore karo
 
             const [h, m] = task.deadline.split(':');
             const deadlineMins = parseInt(h) * 60 + parseInt(m);
@@ -90,10 +91,43 @@ client.once('ready', () => {
             if (currentMins >= deadlineMins) {
                 const channel = client.channels.cache.get(task.discordChannelId);
                 if (channel) {
-                    channel.send(`🚨 <@${task.userId}> Aaj ki deadline (${task.deadline}) khatam ho gayi hai! Jaldi video bhejo, ya phir thora time chahiye toh \`!wait 30\` likho!`);
+                    const lateByMins = currentMins - deadlineMins;
+                    
+                    try {
+                        // AI ko gusse wala prompt dena
+                        const prompt = `You are a strict task manager bot for KHR Official agency. An editor is late submitting a video by ${lateByMins} minutes. 
+                        Write a short, progressive warning message in Roman Urdu. 
+                        If they are 10-20 mins late, be slightly annoyed. If 30+ mins late, be very angry. 
+                        You MUST explicitly mention that you will report their late delivery to "Boss Afnan". 
+                        Keep it concise (1-2 lines) and direct for a Discord message. Do not use hashtags.`;
+
+                        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`;
+                        const response = await fetch(url, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                contents: [{ parts: [{ text: prompt }] }]
+                            })
+                        });
+
+                        const data = await response.json();
+                        let aiAngryMessage = "";
+                        
+                        if (data.candidates && data.candidates.length > 0) {
+                            aiAngryMessage = data.candidates[0].content.parts[0].text.trim();
+                        } else {
+                            aiAngryMessage = `Aap ${lateByMins} minute late ho chuke hain! Jaldi video bhejein warna direct Boss Afnan ko report chali jayegi!`;
+                        }
+
+                        channel.send(`🚨 <@${task.userId}> ${aiAngryMessage}\n*(Thora time chahiye toh \`!wait 30\` likho, warna ban jao ge boss ka shikar!)*`);
+                        
+                    } catch (error) {
+                        // Agar internet ya API issue ho toh default warning
+                        channel.send(`🚨 <@${task.userId}> Aap ki deadline khatam hue ${lateByMins} minute ho gaye hain! Jaldi video bhejo warna Boss Afnan ko batana padega!\n*(Thora time chahiye toh \`!wait 30\` likho)*`);
+                    }
                 }
             }
-        });
+        }
     }, { timezone: 'Asia/Karachi' });
 
     // ⏰ CRON 3: Raat 12 Baje Editors ka Task Reset karna (Naye din ke liye)
@@ -112,7 +146,7 @@ client.on('messageCreate', async (message) => {
     const args = message.content.split(/\s+/);
     const command = args[0].toLowerCase();
 
-    // 1️⃣ MANAGER: Task Assign Command (With Target Fix)
+    // 1️⃣ MANAGER: Task Assign Command
     if (command === '!assign') {
         const mentionedUser = message.mentions.users.first();
         if (!mentionedUser || args.length < 5) return message.reply('❌ Sahi tareeqa: `!assign @User TargetViews ChannelName Days`');
@@ -137,7 +171,7 @@ client.on('messageCreate', async (message) => {
 
     // 2️⃣ MANAGER: Real-Time Report Command (!report ChannelName)
     if (command === '!report' || command === '!today') {
-        const channelName = args[1] === 'report' ? args[2] : args[1]; // Handle !report or !today report
+        const channelName = args[1] === 'report' ? args[2] : args[1]; 
         if (!channelName) return message.reply('❌ Sahi tareeqa: `!report ChannelName`');
         
         const task = db.managerTasks.find(t => t.channelName.toLowerCase() === channelName.toLowerCase());
@@ -191,7 +225,7 @@ client.on('messageCreate', async (message) => {
     if (command === '!wait') {
         const amount = parseInt(args[1]);
         const unit = args[2] ? args[2].toLowerCase() : 'minutes';
-        let addMins = 30; // Default snooze
+        let addMins = 30; 
         
         if (!isNaN(amount)) {
             if (unit.includes('hour') || unit === 'h') addMins = amount * 60;
@@ -245,7 +279,6 @@ client.on('messageCreate', async (message) => {
         const editorTask = db.editorTasks.find(t => t.userId === message.author.id && t.channelName.toLowerCase() === channelName.toLowerCase());
 
         if (editorTask) {
-            // Check performance history (was it late?)
             const nowStr = new Date().toLocaleString("en-US", {timeZone: "Asia/Karachi"});
             const dateObj = new Date(nowStr);
             const currentMins = dateObj.getHours() * 60 + dateObj.getMinutes();
@@ -254,7 +287,6 @@ client.on('messageCreate', async (message) => {
             
             const isLate = currentMins > deadlineMins;
             
-            // Save to history
             if (!db.editorHistory) db.editorHistory = [];
             db.editorHistory.push({
                 userId: message.author.id,
@@ -262,7 +294,6 @@ client.on('messageCreate', async (message) => {
                 date: dateObj.toLocaleDateString(),
                 isLate: isLate
             });
-            // Keep history light (max 1000 records)
             if (db.editorHistory.length > 1000) db.editorHistory.shift();
             
             editorTask.completedToday = true;
@@ -309,31 +340,20 @@ client.on('messageCreate', async (message) => {
     // 🤖 🔟 SMART AI ASSISTANT (Gemini API Integration)
     const knownCommands = ['!assign', '!unassign', '!editor', '!done', '!stop-editor', '!wait', '!leave', '!report', '!today', '!status', '!performance', '!test'];
     
-    // Agar message '!' se shuru ho, command na ho, aur kisi user ko tag na kiya ho
     if (command.startsWith('!') && command.length > 1 && !command.startsWith('!<@') && !knownCommands.includes(command)) {
-        
-        // '!' ko hata kar user ka sawal nikalna
         const userPrompt = message.content.substring(1).trim(); 
-        
-        // Bot pehle "Soch raha hu" ka message bheje ga
         const thinkingMsg = await message.reply('🤖 *Soch raha hu...*');
 
         try {
-            // Gemini API (1.5 Flash) ko request bhejna
             const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`;
-            
             const response = await fetch(url, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     system_instruction: {
                         parts: [{ text: "You are a highly intelligent, professional, and friendly AI assistant for a video editing agency named KHR Official. You answer editing questions, general queries, and chat like a real person. Mostly use Roman Urdu/Hindi to reply. Keep responses concise and formatted nicely for Discord." }]
                     },
-                    contents: [{
-                        parts: [{ text: userPrompt }]
-                    }]
+                    contents: [{ parts: [{ text: userPrompt }] }]
                 })
             });
 
@@ -341,12 +361,10 @@ client.on('messageCreate', async (message) => {
 
             if (data.candidates && data.candidates.length > 0) {
                 const aiReply = data.candidates[0].content.parts[0].text;
-                // Puranay "Soch raha hu" wale message ko real answer se edit kar dena
                 await thinkingMsg.edit(`🤖 ${aiReply}`);
             } else {
                 await thinkingMsg.edit('❌ *Gemini API se koi jawab nahi aaya. Apni API key ya Render par Environment Variable check karein.*');
             }
-
         } catch (error) {
             console.error("Gemini API Error:", error);
             await thinkingMsg.edit('❌ *System mein koi error aa gaya hai. Baad mein try karein.*');
@@ -354,6 +372,5 @@ client.on('messageCreate', async (message) => {
     }
 });
 
-client.login(process.env.DISCORD_TOKEN);
-
+// Sirf ek baar login
 client.login(process.env.DISCORD_TOKEN);
