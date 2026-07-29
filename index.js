@@ -2,7 +2,7 @@ require('dotenv').config();
 const { Client, GatewayIntentBits } = require('discord.js');
 const express = require('express');
 const cron = require('node-cron');
-const mongoose = require('mongoose'); // NAYA: MongoDB Tool
+const mongoose = require('mongoose'); // Cloud Database Tool
 
 // Dummy Server for Render
 const app = express();
@@ -72,7 +72,7 @@ client.once('ready', () => {
 
     // ⏰ CRON 1: Raat 12 Baje Manager ki Daily Report
     cron.schedule('0 0 * * *', async () => {
-        const managerTasks = await ManagerTask.find(); // Cloud se data uthana
+        const managerTasks = await ManagerTask.find();
         for (let task of managerTasks) {
             const currentViews = await getYouTubeViews(task.channelName);
             const initial = task.initialViews || 0;
@@ -84,7 +84,7 @@ client.once('ready', () => {
             const pBar = '[' + '▓'.repeat(pCount) + '░'.repeat(10 - pCount) + ']';
 
             task.daysLeft -= 1; 
-            await task.save(); // Cloud par update save karna
+            await task.save();
             
             const channel = client.channels.cache.get(task.discordChannelId);
             if (channel) {
@@ -100,7 +100,7 @@ client.once('ready', () => {
         const currentMins = dateObj.getHours() * 60 + dateObj.getMinutes();
         const nowMs = Date.now();
 
-        const editorTasks = await EditorTask.find(); // Cloud se data uthana
+        const editorTasks = await EditorTask.find();
         for (let task of editorTasks) {
             if (task.completedToday) continue; 
             if (task.snoozeUntil && nowMs < task.snoozeUntil) continue; 
@@ -115,7 +115,7 @@ client.once('ready', () => {
                     try {
                         const prompt = `You are a strict task manager bot for KHR Official agency. An editor is late submitting a video by ${lateByMins} minutes. Write a short, progressive warning message in Roman Urdu. If they are 10-20 mins late, be slightly annoyed. If 30+ mins late, be very angry. You MUST explicitly mention that you will report their late delivery to "Boss Afnan". Keep it concise (1-2 lines) and direct for a Discord message. Do not use hashtags.`;
 
-                        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`;
+                        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`;
                         const response = await fetch(url, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
@@ -136,8 +136,7 @@ client.once('ready', () => {
 
     // ⏰ CRON 3: Raat 12 Baje Editors ka Task Reset karna
     cron.schedule('0 0 * * *', async () => {
-        await EditorTask.updateMany({}, { completedToday: false, snoozeUntil: null }); // Cloud mein sab update karna
-        console.log('✅ Editors tasks reset for the new day.');
+        await EditorTask.updateMany({}, { completedToday: false, snoozeUntil: null });
     }, { timezone: 'Asia/Karachi' });
 });
 
@@ -163,7 +162,7 @@ client.on('messageCreate', async (message) => {
             discordChannelId: message.channel.id,
             initialViews: initialViews
         });
-        await newTask.save(); // Cloud par save
+        await newTask.save();
         return message.reply(`✅ Task Saved Permanently! **${args[3]}** ke aaj ke views (${initialViews.toLocaleString()}) save ho gaye hain. Ab inke aagay **${parseInt(args[2]).toLocaleString()}** naye views track honge!`);
     }
 
@@ -172,7 +171,6 @@ client.on('messageCreate', async (message) => {
         const channelName = args[1] === 'report' ? args[2] : args[1]; 
         if (!channelName) return message.reply('❌ Sahi tareeqa: `!report ChannelName`');
         
-        // Cloud se channel dhoondna
         const task = await ManagerTask.findOne({ channelName: new RegExp('^' + channelName + '$', 'i') });
         if (!task) return message.reply(`❌ Mujhey '${channelName}' ka koi active task nahi mila.`);
         
@@ -216,7 +214,7 @@ client.on('messageCreate', async (message) => {
             snoozeUntil: null,
             discordChannelId: message.channel.id
         });
-        await newTask.save(); // Cloud par save
+        await newTask.save();
         return message.reply(`🎬 Editor task set permanently! Agar ${deadline} tak video na aayi, toh har 10 minute baad alarm baje ga.`);
     }
 
@@ -282,10 +280,10 @@ client.on('messageCreate', async (message) => {
                 date: dateObj.toLocaleDateString(),
                 isLate: isLate
             });
-            await newHistory.save(); // History save
+            await newHistory.save();
             
             editorTask.completedToday = true;
-            await editorTask.save(); // Task update
+            await editorTask.save();
             
             const extraMsg = isLate ? "*(Lekin aaj aap late thay! ⏰)*" : "*(Good job, waqt par kaam poora kiya! ⭐)*";
             return message.reply(`✅ Zabardast! Aap ka **${editorTask.channelName}** ka task complete mark ho gaya hai. Alarm off! 🔕\n${extraMsg}`);
