@@ -156,7 +156,7 @@ client.once('ready', () => {
                             - If 60+ mins late: BE EXTREMELY FURIOUS. Threaten their job and explicitly say you are reporting this to Boss Afnan right now.
                             Keep it concise (1-3 lines). No hashtags.`;
 
-                            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`;
+                            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=${process.env.GEMINI_API_KEY}`;
                             const response = await fetch(url, {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json' },
@@ -447,7 +447,7 @@ client.on('messageCreate', async (message) => {
         const thinkingMsg = await message.reply('🤖 *Boss mode on...*');
 
         try {
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`;
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=${process.env.GEMINI_API_KEY}`;
             const response = await fetch(url, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
