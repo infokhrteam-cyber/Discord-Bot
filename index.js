@@ -115,7 +115,7 @@ client.once('ready', () => {
                     try {
                         const prompt = `You are a strict task manager bot for KHR Official agency. An editor is late submitting a video by ${lateByMins} minutes. Write a short, progressive warning message in Roman Urdu. If they are 10-20 mins late, be slightly annoyed. If 30+ mins late, be very angry. You MUST explicitly mention that you will report their late delivery to "Boss Afnan". Keep it concise (1-2 lines) and direct for a Discord message. Do not use hashtags.`;
 
-                        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`;
+                        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`;
                         const response = await fetch(url, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
@@ -326,7 +326,7 @@ client.on('messageCreate', async (message) => {
         const thinkingMsg = await message.reply('🤖 *Soch raha hu...*');
 
         try {
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`;
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`;
             const response = await fetch(url, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
