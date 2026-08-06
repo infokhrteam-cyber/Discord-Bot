@@ -70,7 +70,9 @@ const CHANNEL_IDS = {
 };
 
 async function getYouTubeViews(channelName) {
-    const channelId = CHANNEL_IDS[channelName];
+    const channelKey = Object.keys(CHANNEL_IDS).find(k => k.toLowerCase() === channelName.toLowerCase());
+    const channelId = channelKey ? CHANNEL_IDS[channelKey] : null;
+
     if (!channelId) return 0;
     try {
         const url = `https://www.googleapis.com/youtube/v3/channels?part=statistics&id=${channelId}&key=${process.env.YOUTUBE_API_KEY}`;
@@ -170,7 +172,7 @@ client.once('ready', () => {
                             - If 60+ mins late: FURIOUS. Threaten their job and mention reporting to Boss Afnan.
                             Keep it 1-2 lines. No hashtags.`;
 
-                            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=${process.env.GEMINI_API_KEY}`;
+                            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`;
                             const response = await fetch(url, {
                                 method: 'POST',
                                 headers: { 'Content-Type': 'application/json' },
@@ -180,7 +182,6 @@ client.once('ready', () => {
                             const data = await response.json();
                             let aiAngryMessage = data.candidates && data.candidates.length > 0 ? data.candidates[0].content.parts[0].text.trim() : `Aap ${lateByMins} minute late hain! Fatafat kaam karein!`;
 
-                            // Channel Name is in brackets so AI can parse it later
                             channel.send(`🚨 ${bossTag}<@${task.userId}> **[${task.channelName}]** ${aiAngryMessage}`);
                         } catch (error) {
                             channel.send(`🚨 ${bossTag}<@${task.userId}> **[${task.channelName}]** Aap ki deadline khatam hue ${lateByMins} minute ho gaye hain! Jaldi video bhejo!`);
@@ -207,7 +208,6 @@ client.on('messageCreate', async (message) => {
         try {
             const repliedMsg = await message.channel.messages.fetch(message.reference.messageId);
             if (repliedMsg.author.id === client.user.id) {
-                // Check if it's an alert message containing a [ChannelName]
                 const match = repliedMsg.content.match(/\[(.*?)\]/);
                 const channelName = match ? match[1] : null;
 
@@ -222,7 +222,7 @@ client.on('messageCreate', async (message) => {
                         3. If they are asking to EXTEND the deadline permanently or need a lot more time, output EXACTLY: ACTION_EXTEND
                         4. Otherwise, act as a strict sarcastic AI manager and tell them to stop talking and start working in Roman Urdu.`;
 
-                        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=${process.env.GEMINI_API_KEY}`;
+                        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`;
                         const response = await fetch(url, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
@@ -234,21 +234,36 @@ client.on('messageCreate', async (message) => {
                             const aiReply = data.candidates[0].content.parts[0].text.trim();
 
                             if (aiReply.includes('ACTION_DONE')) {
-                                // Mark Done
-                                editorTask.completedToday = true;
-                                await editorTask.save();
-                                return message.reply(`✅ Theek hai! Main ne **${channelName}** ko aakhri waqt par complete mark kar diya hai. Aainda waqt ka khayal rakhna!`);
+                                // 💡 FIX: Sirf ek task (Sab se purana) complete hoga
+                                const tasks = await EditorTask.find({ userId: message.author.id, channelName: new RegExp('^' + channelName + '$', 'i'), completedToday: false }).sort({ deadline: 1 });
+                                if (tasks.length > 0) {
+                                    const eTask = tasks[0];
+                                    const nowStr = new Date().toLocaleString("en-US", {timeZone: "Asia/Karachi"});
+                                    const dateObj = new Date(nowStr);
+                                    const currentMins = dateObj.getHours() * 60 + dateObj.getMinutes();
+                                    const [h, m] = eTask.deadline.split(':');
+                                    const isLate = currentMins > (parseInt(h) * 60 + parseInt(m));
+                                    
+                                    await new EditorHistory({ userId: message.author.id, channelName: eTask.channelName, date: dateObj.toLocaleDateString(), isLate }).save();
+                                    eTask.completedToday = true;
+                                    await eTask.save();
+                                    return message.reply(`✅ Theek hai! Main ne **${channelName}** (Deadline: ${eTask.deadline}) ko complete mark kar diya hai.`);
+                                }
                             
                             } else if (aiReply.includes('ACTION_SNOOZE_')) {
-                                // Extract Minutes and Snooze
                                 const minsMatch = aiReply.match(/\d+/);
                                 const addMins = minsMatch ? parseInt(minsMatch[0]) : 30;
-                                editorTask.snoozeUntil = Date.now() + (addMins * 60000);
-                                await editorTask.save();
-                                return message.reply(`🔕 Theek hai boss! Sirf **${addMins} minute** ka time de raha hu. Uske baad double gussa aayega!`);
+                                
+                                // Sirf sab se nazdeek deadline wala task snooze hoga
+                                const tasks = await EditorTask.find({ userId: message.author.id, channelName: new RegExp('^' + channelName + '$', 'i'), completedToday: false }).sort({ deadline: 1 });
+                                if (tasks.length > 0) {
+                                    const eTask = tasks[0];
+                                    eTask.snoozeUntil = Date.now() + (addMins * 60000);
+                                    await eTask.save();
+                                    return message.reply(`🔕 Theek hai boss! **${eTask.channelName}** ke liye **${addMins} minute** ka time de raha hu. Uske baad double gussa aayega!`);
+                                }
                             
                             } else if (aiReply.includes('ACTION_EXTEND')) {
-                                // Request Boss in Admin Channel
                                 const adminChannelId = await getSetting('adminChannel');
                                 if (adminChannelId) {
                                     const adminChannel = client.channels.cache.get(adminChannelId);
@@ -258,11 +273,10 @@ client.on('messageCreate', async (message) => {
                                 }
                                 return message.reply(`🛑 Meri authority nahi hai deadline badhane ki. Main ne Boss Afnan ko request bhej di hai, unki ijazat ka wait karein.`);
                             } else {
-                                // AI Sarcastic Chat
                                 return message.reply(`💼 ${aiReply}`);
                             }
                         }
-                        return; // Stop further processing if it was an alert reply
+                        return;
                     }
                 }
             }
@@ -305,7 +319,6 @@ client.on('messageCreate', async (message) => {
             if (task) {
                 const channel = client.channels.cache.get(task.discordChannelId);
                 if (channel) {
-                    // Natural AI Phrasing
                     channel.send(`🤖 Oye <@${target.id}>, ${spyMsg}`);
                     return message.reply(`✅ Message secretly bheja gaya **${task.channelName}** channel mein.`);
                 }
@@ -325,7 +338,7 @@ client.on('messageCreate', async (message) => {
 
             const [h, m] = nowTimeStr.split(':');
             const mins = parseInt(h) * 60 + parseInt(m);
-            const isLate = mins > (8 * 60 + 45); // 8:45 AM limit
+            const isLate = mins > (8 * 60 + 45);
 
             await new Attendance({ userId: message.author.id, date: today, checkInTime: nowTimeStr, status: isLate ? 'Late' : 'On Time' }).save();
 
@@ -343,13 +356,15 @@ client.on('messageCreate', async (message) => {
 
         if (!mentionedUser || !channelName || !newDeadline) return message.reply('❌ Sahi tareeqa: `!approve @User ChannelName 18:30`');
 
-        const task = await EditorTask.findOne({ userId: mentionedUser.id, channelName: new RegExp('^' + channelName + '$', 'i') });
-        if (task) {
+        // 💡 FIX: Sirf ek pending task ki deadline extend hogi
+        const tasks = await EditorTask.find({ userId: mentionedUser.id, channelName: new RegExp('^' + channelName + '$', 'i'), completedToday: false }).sort({ deadline: 1 });
+        if (tasks.length > 0) {
+            const task = tasks[0];
             task.deadline = newDeadline;
-            task.snoozeUntil = null; // Clear any snooze
+            task.snoozeUntil = null;
             await task.save();
             const workChannel = client.channels.cache.get(task.discordChannelId);
-            if (workChannel) workChannel.send(`🎉 <@${mentionedUser.id}> Boss Afnan ne aap ki guzarish sun li hai! Nayi deadline **${newDeadline}** set ho gayi hai. Ab koi bahana nahi!`);
+            if (workChannel) workChannel.send(`🎉 <@${mentionedUser.id}> Boss Afnan ne aap ki guzarish sun li hai! **${task.channelName}** ki nayi deadline **${newDeadline}** set ho gayi hai. Ab koi bahana nahi!`);
             return message.reply(`✅ Nayi deadline set kar di gayi hai.`);
         } else {
             return message.reply('❌ Koi active task nahi mila.');
@@ -412,8 +427,9 @@ client.on('messageCreate', async (message) => {
         const deadline = args[3]; 
         if (!mentionedUser || !channelName || !deadline || !deadline.includes(':')) return message.reply('❌ Sahi tareeqa: `!editor @User ChannelName 15:00`');
         
+        // 💡 FIX: Naya task add hoga, purana replace nahi hoga (Multiple tasks allowed)
         await new EditorTask({ userId: mentionedUser.id, channelName, deadline, discordChannelId: message.channel.id }).save();
-        return message.reply(`🎬 Editor task set! Deadline: **${deadline}**`);
+        return message.reply(`🎬 Editor task set! **${channelName}** Deadline: **${deadline}**`);
     }
 
     // 5️⃣ EDITOR: Manual Snooze (!wait 30)
@@ -423,9 +439,16 @@ client.on('messageCreate', async (message) => {
         let addMins = 30; 
         if (!isNaN(amount)) addMins = (unit.includes('h') ? amount * 60 : amount);
         
-        const result = await EditorTask.updateMany({ userId: message.author.id, completedToday: false }, { snoozeUntil: Date.now() + (addMins * 60000) });
-        if (result.modifiedCount > 0) return message.reply(`🔕 Agle **${addMins} minute** alarm off kar diya hai. Fatafat kaam karo!`);
-        else return message.reply(`❌ Aap ka koi active task nahi hai.`);
+        // 💡 FIX: Sirf ek pending task (Earliest deadline) snooze hoga
+        const tasks = await EditorTask.find({ userId: message.author.id, completedToday: false }).sort({ deadline: 1 });
+        if (tasks.length > 0) {
+            const editorTask = tasks[0];
+            editorTask.snoozeUntil = Date.now() + (addMins * 60000);
+            await editorTask.save();
+            return message.reply(`🔕 Agle **${addMins} minute** **${editorTask.channelName}** ka alarm off kar diya hai. Fatafat kaam karo!`);
+        } else {
+            return message.reply(`❌ Aap ka koi active task nahi hai.`);
+        }
     }
 
     // 6️⃣ MANAGER: Leave (!leave @user) (Only Boss)
@@ -437,13 +460,18 @@ client.on('messageCreate', async (message) => {
         return message.reply(`🏖️ <@${mentionedUser.id}> ki aaj ki chutti manzoor!`);
     }
 
-    // 7️⃣ EDITOR: Manual Complete (!done ChannelName)
+    // 7️⃣ EDITOR: Manual Complete (!done [ChannelName])
     if (command === '!done') {
-        const channelName = args[1];
-        if (!channelName) return message.reply('❌ Sath channel ka naam batayein ya mere alert ka reply karein.');
-        const editorTask = await EditorTask.findOne({ userId: message.author.id, channelName: new RegExp('^' + channelName + '$', 'i') });
+        const channelName = args[1]; // Optional ab
+        
+        let query = { userId: message.author.id, completedToday: false };
+        if (channelName) query.channelName = new RegExp('^' + channelName + '$', 'i');
 
-        if (editorTask) {
+        // 💡 FIX: Sirf ek pending task (Earliest deadline) utha kar done karega
+        const tasks = await EditorTask.find(query).sort({ deadline: 1 });
+
+        if (tasks.length > 0) {
+            const editorTask = tasks[0];
             const nowStr = new Date().toLocaleString("en-US", {timeZone: "Asia/Karachi"});
             const dateObj = new Date(nowStr);
             const currentMins = dateObj.getHours() * 60 + dateObj.getMinutes();
@@ -451,12 +479,16 @@ client.on('messageCreate', async (message) => {
             const isLate = currentMins > (parseInt(h) * 60 + parseInt(m));
             
             await new EditorHistory({ userId: message.author.id, channelName: editorTask.channelName, date: dateObj.toLocaleDateString(), isLate }).save();
+            
             editorTask.completedToday = true;
             await editorTask.save();
             
             const extraMsg = isLate ? "*(Lekin aaj aap late thay! ⏰)*" : "*(Good job, theek waqt par complete kiya! ⭐)*";
-            return message.reply(`✅ **${editorTask.channelName}** done! \n${extraMsg}`);
-        } else return message.reply(`❌ Mujhey '${channelName}' ka active task nahi mila.`);
+            return message.reply(`✅ **${editorTask.channelName}** (Deadline: ${editorTask.deadline}) done! \n${extraMsg}`);
+        } else {
+            if (channelName) return message.reply(`❌ Mujhey '${channelName}' ka active task nahi mila.`);
+            else return message.reply(`❌ Aap ka koi active pending task nahi hai.`);
+        }
     }
 
     // 8️⃣ MANAGER: Status / Performance Report
@@ -501,7 +533,7 @@ client.on('messageCreate', async (message) => {
         const thinkingMsg = await message.reply('🤖 *Boss mode on...*');
 
         try {
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent?key=${process.env.GEMINI_API_KEY}`;
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`;
             const response = await fetch(url, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
